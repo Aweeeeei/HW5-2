@@ -17,7 +17,7 @@ st.divider() # 分隔線
 
 # --- 定義 n8n 的 Webhook URL (之後我們會填入這裡) ---
 # 目前先留空，等 n8n 架好後再回來填
-N8N_WEBHOOK_URL = "" 
+N8N_WEBHOOK_URL = "https://n8n-production-092db.up.railway.app/webhook-test/calorie-ai" 
 
 # --- 版面分割：左邊 (文字輸入) vs 右邊 (圖片辨識) ---
 col1, col2 = st.columns([1, 1], gap="large")
