@@ -12,7 +12,7 @@ if 'food_log' not in st.session_state:
     st.session_state.food_log = [] # 建立一個空的食物清單
 
 # --- 3. 設定 n8n 網址 (請填入你 Railway 的正式網址) ---
-# 記得網址後面不要加 -test，這樣才能隨時運作
+# 記得網址後面不要加 -test
 N8N_WEBHOOK_URL = "https://n8n-production-092db.up.railway.app/webhook/calorie-ai"
 
 st.title("🍱 AI 熱量計算機")
@@ -39,14 +39,12 @@ with col1:
                     
                     if response.status_code == 200:
                         data = response.json()
-                        # 取得真正的熱量
                         real_calories = data.get('calories', 0)
                         advice = data.get('advice', '無建議')
 
                         if real_calories == 0:
-                            st.warning("⚠️ AI 回傳熱量為 0，可能是解析失敗或無法估算。")
+                            st.warning("⚠️ AI 回傳 0 kcal，可能是無法辨識。")
                         
-                        # 將資料加入暫存清單
                         new_item = {
                             "name": f"{food_input} ({weight}g)",
                             "calories": real_calories,
@@ -55,14 +53,14 @@ with col1:
                         }
                         st.session_state.food_log.append(new_item)
                         st.success(f"已加入：{food_input} ({real_calories} kcal)")
-                        st.rerun() # 強制刷新讓下方表格更新
+                        st.rerun()
                     else:
                         st.error(f"連線失敗 (Status: {response.status_code})")
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
 
 # ==========================================
-# 右欄：圖片辨識 (零食)
+# 右欄：圖片辨識 (零食) - 新增份數功能
 # ==========================================
 with col2:
     st.subheader("📸 新增零食 (拍照)")
@@ -70,6 +68,17 @@ with col2:
     
     if uploaded_file:
         st.image(uploaded_file, width=200)
+        
+        # --- [NEW] 新增：份數選擇 ---
+        portions = st.number_input(
+            "你吃了幾份？ (例如：0.5=半包, 1=整包, 2=兩包)", 
+            min_value=0.1, 
+            max_value=10.0, 
+            value=1.0, 
+            step=0.5,
+            format="%.1f"
+        )
+        
         if st.button("分析圖片並加入"):
             with st.spinner("AI 正在看圖..."):
                 try:
@@ -82,34 +91,35 @@ with col2:
                     
                     if response.status_code == 200:
                         data = response.json()
-                        snack_cal = data.get('snack_calories', 0)
+                        # 取得「單位熱量」 (AI 看到的每份或整包熱量)
+                        unit_cal = data.get('snack_calories', 0)
                         
-                        # 將資料加入暫存清單
+                        # --- [NEW] 計算總熱量 (單位熱量 x 份數) ---
+                        total_snack_cal = int(unit_cal * portions)
+                        
                         new_item = {
-                            "name": "圖片掃描零食",
-                            "calories": snack_cal,
-                            "note": "AI 影像辨識",
+                            "name": f"圖片掃描零食 ({portions}份)",
+                            "calories": total_snack_cal,
+                            "note": f"AI 辨識單位熱量: {unit_cal} kcal", # 備註記一下原始值
                             "type": "image"
                         }
                         st.session_state.food_log.append(new_item)
-                        st.success(f"已加入零食：{snack_cal} kcal")
-                        st.rerun() # 強制刷新
+                        st.success(f"已加入：{total_snack_cal} kcal (單份 {unit_cal} x {portions})")
+                        st.rerun()
                     else:
                         st.error(f"連線失敗 (Status: {response.status_code})")
                 except Exception as e:
                     st.error(f"錯誤：{e}")
 
 # ==========================================
-# 下方：今日飲食清單 (表格 + 刪除功能)
+# 下方：今日飲食清單
 # ==========================================
 st.divider()
 st.subheader("📋 今日飲食紀錄表")
 
-# 計算總熱量
 total_cals = sum(item['calories'] for item in st.session_state.food_log)
-
-# 顯示總熱量進度條
 target_cal = 2000
+
 col_sum, col_bar = st.columns([1, 3])
 with col_sum:
     st.metric("今日總熱量", f"{total_cals} kcal", delta=f"剩餘 {target_cal - total_cals} kcal")
@@ -120,7 +130,6 @@ with col_bar:
     if progress >= 1.0:
         st.error("⚠️ 熱量超標啦！")
 
-# 顯示清單表格
 if len(st.session_state.food_log) > 0:
     st.markdown("---")
     # 表頭
@@ -130,7 +139,6 @@ if len(st.session_state.food_log) > 0:
     c3.markdown("**備註**")
     c4.markdown("**操作**")
 
-    # 迴圈印出每一列
     for i, item in enumerate(st.session_state.food_log):
         with st.container():
             col_name, col_cal, col_note, col_action = st.columns([3, 2, 3, 1])
@@ -138,9 +146,8 @@ if len(st.session_state.food_log) > 0:
             col_cal.write(f"{item['calories']} kcal")
             col_note.caption(item['note'])
             
-            # 刪除按鈕 (key 必須唯一)
             if col_action.button("🗑️", key=f"del_{i}"):
-                st.session_state.food_log.pop(i) # 從清單移除
-                st.rerun() # 重新整理頁面
+                st.session_state.food_log.pop(i)
+                st.rerun()
 else:
     st.info("目前還沒有紀錄，快去上面輸入食物吧！")
