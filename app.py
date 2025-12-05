@@ -1,22 +1,22 @@
 import streamlit as st
 import requests
 import base64
-import pandas as pd # 用來做一點資料處理
+import pandas as pd
 from PIL import Image
 
 # --- 1. 設定頁面 ---
 st.set_page_config(page_title="AI 熱量計算機", page_icon="🍱", layout="wide")
 
-# --- 2. 初始化 Session State (這是記住清單的關鍵) ---
+# --- 2. 初始化 Session State (記憶體) ---
 if 'food_log' not in st.session_state:
     st.session_state.food_log = [] # 建立一個空的食物清單
 
-# --- 3. 設定 n8n 網址 (請填入你 Railway 的那串) ---
-# 例如: https://n8n-production-xxxx.up.railway.app/webhook-test/calorie-ai
-N8N_WEBHOOK_URL = "https://n8n-production-092db.up.railway.app/webhook-test/calorie-ai"
+# --- 3. 設定 n8n 網址 (請填入你 Railway 的正式網址) ---
+# 記得網址後面不要加 -test，這樣才能隨時運作
+N8N_WEBHOOK_URL = "https://n8n-production-092db.up.railway.app/webhook/calorie-ai"
 
 st.title("🍱 AI 熱量計算機")
-st.caption("作業 5-2 Demo：Streamlit + n8n + Gemini Flash")
+st.caption("作業 5-2 Demo：Streamlit + n8n + Gemini 2.5 Flash")
 
 # --- 版面配置：上層輸入區 ---
 col1, col2 = st.columns(2)
@@ -26,7 +26,7 @@ col1, col2 = st.columns(2)
 # ==========================================
 with col1:
     st.subheader("🍚 新增餐點 (文字)")
-    with st.form("text_form", clear_on_submit=True): # clear_on_submit 讓輸入框送出後自動清空
+    with st.form("text_form", clear_on_submit=True):
         food_input = st.text_input("吃了什麼？", placeholder="例如：一根雞腿")
         weight = st.number_input("重量(克)", value=100, step=10)
         submit_text = st.form_submit_button("計算並加入")
@@ -39,13 +39,13 @@ with col1:
                     
                     if response.status_code == 200:
                         data = response.json()
-                        # 取得真正的熱量 (若 AI 沒回傳，預設 0)
+                        # 取得真正的熱量
                         real_calories = data.get('calories', 0)
-                        advice = data.get('advice', '')
+                        advice = data.get('advice', '無建議')
 
-                        # for testing
-                        st.write(data)
-
+                        if real_calories == 0:
+                            st.warning("⚠️ AI 回傳熱量為 0，可能是解析失敗或無法估算。")
+                        
                         # 將資料加入暫存清單
                         new_item = {
                             "name": f"{food_input} ({weight}g)",
@@ -55,8 +55,9 @@ with col1:
                         }
                         st.session_state.food_log.append(new_item)
                         st.success(f"已加入：{food_input} ({real_calories} kcal)")
+                        st.rerun() # 強制刷新讓下方表格更新
                     else:
-                        st.error("連線失敗，請檢查 n8n 是否有按 Execute")
+                        st.error(f"連線失敗 (Status: {response.status_code})")
                 except Exception as e:
                     st.error(f"發生錯誤：{e}")
 
@@ -68,11 +69,11 @@ with col2:
     uploaded_file = st.file_uploader("上傳營養標示", type=["jpg", "png", "jpeg"])
     
     if uploaded_file:
-        # 顯示縮圖
         st.image(uploaded_file, width=200)
         if st.button("分析圖片並加入"):
             with st.spinner("AI 正在看圖..."):
                 try:
+                    # 轉 Base64
                     bytes_data = uploaded_file.getvalue()
                     base64_str = base64.b64encode(bytes_data).decode('utf-8')
                     
@@ -92,8 +93,9 @@ with col2:
                         }
                         st.session_state.food_log.append(new_item)
                         st.success(f"已加入零食：{snack_cal} kcal")
+                        st.rerun() # 強制刷新
                     else:
-                        st.error("連線失敗")
+                        st.error(f"連線失敗 (Status: {response.status_code})")
                 except Exception as e:
                     st.error(f"錯誤：{e}")
 
@@ -118,29 +120,27 @@ with col_bar:
     if progress >= 1.0:
         st.error("⚠️ 熱量超標啦！")
 
-# 顯示清單表格 (手動繪製，為了放刪除按鈕)
+# 顯示清單表格
 if len(st.session_state.food_log) > 0:
     st.markdown("---")
     # 表頭
-    h1, h2, h3, h4 = st.columns([3, 2, 3, 1])
-    h1.markdown("**食物名稱**")
-    h2.markdown("**熱量 (kcal)**")
-    h3.markdown("**備註**")
-    h4.markdown("**操作**")
+    c1, c2, c3, c4 = st.columns([3, 2, 3, 1])
+    c1.markdown("**食物名稱**")
+    c2.markdown("**熱量**")
+    c3.markdown("**備註**")
+    c4.markdown("**操作**")
 
     # 迴圈印出每一列
-    # 使用 enumerate 取得索引 i，這樣我們才知道要刪除哪一個
     for i, item in enumerate(st.session_state.food_log):
         with st.container():
-            c1, c2, c3, c4 = st.columns([3, 2, 3, 1])
-            c1.write(item['name'])
-            c2.write(f"{item['calories']}")
-            c3.caption(item['note'])
+            col_name, col_cal, col_note, col_action = st.columns([3, 2, 3, 1])
+            col_name.write(item['name'])
+            col_cal.write(f"{item['calories']} kcal")
+            col_note.caption(item['note'])
             
-            # 刪除按鈕
-            # key 必須唯一，所以用 f"del_{i}"
-            if c4.button("🗑️", key=f"del_{i}"):
+            # 刪除按鈕 (key 必須唯一)
+            if col_action.button("🗑️", key=f"del_{i}"):
                 st.session_state.food_log.pop(i) # 從清單移除
-                st.rerun() # 強制重新整理頁面，讓表格更新
+                st.rerun() # 重新整理頁面
 else:
     st.info("目前還沒有紀錄，快去上面輸入食物吧！")
