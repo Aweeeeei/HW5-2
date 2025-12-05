@@ -1,0 +1,175 @@
+{
+  "name": "Calorie AI (Auto-Fix v4.0)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "calorie-ai",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.body.type }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "text"
+            },
+            {
+              "value2": "image",
+              "output": 1
+            }
+          ]
+        },
+        "fallbackOutput": 0
+      },
+      "id": "switch",
+      "name": "Switch (文字/圖片)",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=YOUR_KEY_HERE",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: \"你是一個營養師。使用者吃了：\" + $json.body.content + \" (份量約 \" + $json.body.weight + \" 克)。請回傳一個純 JSON 格式，嚴禁 Markdown，格式如下： { \\\"calories\\\": 數字(整數), \\\"advice\\\": \\\"簡短評語\\\" }。\" }] }] }) }}",
+        "options": {}
+      },
+      "id": "gemini-text",
+      "name": "Gemini (Text)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=YOUR_KEY_HERE",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: \"你是一個嚴格的數據讀取機器人。請直接讀取圖片中表格標示的『每一份量』(Per Serving) 的熱量數值。嚴格規則：1. 絕對禁止乘法計算。2. 即使看到『本包裝含 N 份』，也完全忽略那個份數，我只要『1 份』的熱量。3. 優先回傳『每份』的數值。請回傳純 JSON 格式，格式如下： { \\\"snack_calories\\\": 數字(整數) }\" }, { inline_data: { mime_type: \"image/jpeg\", data: $json.body.image_data } }] }] }) }}",
+        "options": {}
+      },
+      "id": "gemini-vision",
+      "name": "Gemini (Vision)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        800,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  // 1. 抓取 AI 回傳的原始文字\n  const rawText = $input.item.json.candidates[0].content.parts[0].text;\n  \n  // 2. 移除可能存在的 Markdown 符號\n  const cleanText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();\n  \n  // 3. 解析成真正的物件\n  return JSON.parse(cleanText);\n  \n} catch (error) {\n  return { calories: 0, advice: \"解析失敗: \" + error.message };\n}"
+      },
+      "id": "clean-json",
+      "name": "Code (清洗資料)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Switch (文字/圖片)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch (文字/圖片)": {
+      "main": [
+        [
+          {
+            "node": "Gemini (Text)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gemini (Vision)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (Text)": {
+      "main": [
+        [
+          {
+            "node": "Code (清洗資料)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (Vision)": {
+      "main": [
+        [
+          {
+            "node": "Code (清洗資料)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code (清洗資料)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
