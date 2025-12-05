@@ -43,6 +43,9 @@ with col1:
                         real_calories = data.get('calories', 0)
                         advice = data.get('advice', '')
 
+                        # for testing
+                        st.write(data)
+
                         # 將資料加入暫存清單
                         new_item = {
                             "name": f"{food_input} ({weight}g)",
