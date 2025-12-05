@@ -1,115 +1,143 @@
 import streamlit as st
 import requests
 import base64
+import pandas as pd # 用來做一點資料處理
 from PIL import Image
 
-# --- 設定頁面配置 (必須是第一行指令) ---
-st.set_page_config(
-    page_title="AI 飲食熱量管家",
-    page_icon="🍱",
-    layout="wide" # 使用寬版面，讓左右兩欄更清楚
-)
+# --- 1. 設定頁面 ---
+st.set_page_config(page_title="AI 熱量計算機", page_icon="🍱", layout="wide")
 
-# --- 標題區 ---
-st.title("🍱 AI 飲食熱量管家")
-st.markdown("透過 **文字描述** 或 **拍照辨識**，輕鬆紀錄你的每日熱量攝取。")
-st.divider() # 分隔線
+# --- 2. 初始化 Session State (這是記住清單的關鍵) ---
+if 'food_log' not in st.session_state:
+    st.session_state.food_log = [] # 建立一個空的食物清單
 
-# --- 定義 n8n 的 Webhook URL (之後我們會填入這裡) ---
-# 目前先留空，等 n8n 架好後再回來填
-N8N_WEBHOOK_URL = "https://n8n-production-092db.up.railway.app/webhook-test/calorie-ai" 
+# --- 3. 設定 n8n 網址 (請填入你 Railway 的那串) ---
+# 例如: https://n8n-production-xxxx.up.railway.app/webhook-test/calorie-ai
+N8N_WEBHOOK_URL = "https://n8n-production-092db.up.railway.app/webhook-test/calorie-ai"
 
-# --- 版面分割：左邊 (文字輸入) vs 右邊 (圖片辨識) ---
-col1, col2 = st.columns([1, 1], gap="large")
+st.title("🍱 AI 熱量計算機")
+st.caption("作業 5-2 Demo：Streamlit + n8n + Gemini Flash")
+
+# --- 版面配置：上層輸入區 ---
+col1, col2 = st.columns(2)
 
 # ==========================================
-# 左欄：日常便當/菜色輸入 (NLP)
+# 左欄：文字輸入 (便當/正餐)
 # ==========================================
 with col1:
-    st.subheader("🍚 日常餐點紀錄")
-    st.info("輸入你吃的食物，AI 幫你估算熱量。")
-
-    with st.form("meal_form"):
-        food_text = st.text_input(
-            "今天吃了什麼？", 
-            placeholder="例如：一碗白飯、一份燙青菜、一塊炸排骨"
-        )
+    st.subheader("🍚 新增餐點 (文字)")
+    with st.form("text_form", clear_on_submit=True): # clear_on_submit 讓輸入框送出後自動清空
+        food_input = st.text_input("吃了什麼？", placeholder="例如：一根雞腿")
+        weight = st.number_input("重量(克)", value=100, step=10)
+        submit_text = st.form_submit_button("計算並加入")
         
-        # 讓使用者選擇大概的份量或克數
-        weight_gram = st.number_input(
-            "總重量大約幾克？(若不確定可不填)", 
-            min_value=0, 
-            max_value=2000, 
-            step=10,
-            value=0
-        )
-        
-        submitted_text = st.form_submit_button("計算並加入今日熱量")
+        if submit_text and food_input:
+            with st.spinner("AI 正在估算中..."):
+                try:
+                    payload = {"type": "text", "content": food_input, "weight": weight}
+                    response = requests.post(N8N_WEBHOOK_URL, json=payload)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        # 取得真正的熱量 (若 AI 沒回傳，預設 0)
+                        real_calories = data.get('calories', 0)
+                        advice = data.get('advice', '')
 
-        if submitted_text:
-            if not food_text:
-                st.warning("請先輸入食物名稱喔！")
-            else:
-                # --- 這裡之後會呼叫 n8n ---
-                st.write("🔄 正在傳送給 AI 估算中...")
-                
-                # (模擬) 假設 n8n 回傳成功的樣子
-                # 之後我們會把這段換成真實的 API 請求
-                import time
-                time.sleep(1) # 假裝運算 1 秒
-                
-                # 模擬結果
-                mock_calories = 650 
-                st.success(f"✅ 已紀錄：{food_text}")
-                st.metric(label="估算熱量", value=f"{mock_calories} kcal")
+                        # 將資料加入暫存清單
+                        new_item = {
+                            "name": f"{food_input} ({weight}g)",
+                            "calories": real_calories,
+                            "note": advice,
+                            "type": "text"
+                        }
+                        st.session_state.food_log.append(new_item)
+                        st.success(f"已加入：{food_input} ({real_calories} kcal)")
+                    else:
+                        st.error("連線失敗，請檢查 n8n 是否有按 Execute")
+                except Exception as e:
+                    st.error(f"發生錯誤：{e}")
 
 # ==========================================
-# 右欄：零食/營養標示辨識 (Vision)
+# 右欄：圖片辨識 (零食)
 # ==========================================
 with col2:
-    st.subheader("🍪 零食熱量掃描")
-    st.info("拍下包裝背面的營養標示表，AI 幫你換算佔比。")
-
-    uploaded_file = st.file_uploader("上傳照片", type=["jpg", "png", "jpeg"])
+    st.subheader("📸 新增零食 (拍照)")
+    uploaded_file = st.file_uploader("上傳營養標示", type=["jpg", "png", "jpeg"])
     
-    # 預覽圖片
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="已上傳的圖片", use_container_width=True)
+    if uploaded_file:
+        # 顯示縮圖
+        st.image(uploaded_file, width=200)
+        if st.button("分析圖片並加入"):
+            with st.spinner("AI 正在看圖..."):
+                try:
+                    bytes_data = uploaded_file.getvalue()
+                    base64_str = base64.b64encode(bytes_data).decode('utf-8')
+                    
+                    payload = {"type": "image", "image_data": base64_str}
+                    response = requests.post(N8N_WEBHOOK_URL, json=payload)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        snack_cal = data.get('snack_calories', 0)
+                        
+                        # 將資料加入暫存清單
+                        new_item = {
+                            "name": "圖片掃描零食",
+                            "calories": snack_cal,
+                            "note": "AI 影像辨識",
+                            "type": "image"
+                        }
+                        st.session_state.food_log.append(new_item)
+                        st.success(f"已加入零食：{snack_cal} kcal")
+                    else:
+                        st.error("連線失敗")
+                except Exception as e:
+                    st.error(f"錯誤：{e}")
 
-        st.markdown("#### 你打算吃多少？")
-        portions = st.slider("選擇份數 (例如：半包是 0.5，整包是 1)", 0.1, 5.0, 1.0, 0.1)
-        
-        analyze_btn = st.button("分析圖片熱量")
+# ==========================================
+# 下方：今日飲食清單 (表格 + 刪除功能)
+# ==========================================
+st.divider()
+st.subheader("📋 今日飲食紀錄表")
 
-        if analyze_btn:
-            # --- 這裡之後會呼叫 n8n ---
-            if N8N_WEBHOOK_URL == "":
-                st.error("尚未設定 n8n Webhook URL，目前僅為介面展示。")
-            else:
-                st.write("🔄 AI 正在讀取營養標示...")
-            
-            # (模擬) 假設 AI 讀出來的結果
-            # 之後這段會被真實資料取代
-            mock_snack_cal_per_serving = 150 # 假設每份 150 卡
-            total_snack_cal = int(mock_snack_cal_per_serving * portions)
-            daily_target = 2000 # 成人每日基準
-            
-            percentage = (total_snack_cal / daily_target)
-            if percentage > 1.0: percentage = 1.0 # 避免爆表
-            
-            st.divider()
-            st.markdown(f"### 🔥 熱量分析結果")
-            st.write(f"這 **{portions} 份** 的熱量約為： **{total_snack_cal} kcal**")
-            
-            st.write(f"佔成人每日建議攝取量 ({daily_target} kcal) 的：")
-            st.progress(percentage, text=f"{percentage*100:.1f}%")
-            
-            if percentage > 0.2:
-                st.warning("⚠️ 注意：這份零食熱量偏高，建議分次食用！")
-            else:
-                st.success("👍 沒問題：這在適量範圍內。")
+# 計算總熱量
+total_cals = sum(item['calories'] for item in st.session_state.food_log)
 
-# --- 底部 ---
-st.markdown("---")
-st.caption("Powered by Streamlit & n8n Workflow")
+# 顯示總熱量進度條
+target_cal = 2000
+col_sum, col_bar = st.columns([1, 3])
+with col_sum:
+    st.metric("今日總熱量", f"{total_cals} kcal", delta=f"剩餘 {target_cal - total_cals} kcal")
+with col_bar:
+    st.write("每日額度使用率")
+    progress = min(total_cals / target_cal, 1.0)
+    st.progress(progress)
+    if progress >= 1.0:
+        st.error("⚠️ 熱量超標啦！")
+
+# 顯示清單表格 (手動繪製，為了放刪除按鈕)
+if len(st.session_state.food_log) > 0:
+    st.markdown("---")
+    # 表頭
+    h1, h2, h3, h4 = st.columns([3, 2, 3, 1])
+    h1.markdown("**食物名稱**")
+    h2.markdown("**熱量 (kcal)**")
+    h3.markdown("**備註**")
+    h4.markdown("**操作**")
+
+    # 迴圈印出每一列
+    # 使用 enumerate 取得索引 i，這樣我們才知道要刪除哪一個
+    for i, item in enumerate(st.session_state.food_log):
+        with st.container():
+            c1, c2, c3, c4 = st.columns([3, 2, 3, 1])
+            c1.write(item['name'])
+            c2.write(f"{item['calories']}")
+            c3.caption(item['note'])
+            
+            # 刪除按鈕
+            # key 必須唯一，所以用 f"del_{i}"
+            if c4.button("🗑️", key=f"del_{i}"):
+                st.session_state.food_log.pop(i) # 從清單移除
+                st.rerun() # 強制重新整理頁面，讓表格更新
+else:
+    st.info("目前還沒有紀錄，快去上面輸入食物吧！")
